@@ -17,6 +17,7 @@ from .views import (
     EmpleadoProfileUpdateView,
     ChangePasswordView, 
     CustomTokenObtainPairView
+    , MeView
 )
 
 app_name = 'personal_admin'  # ← añadido para evitar conflictos de nombres
@@ -43,6 +44,7 @@ urlpatterns = [
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
     path('cliente/profile/', ClienteProfileUpdateView.as_view(), name='cliente-profile-update'),
     path('empleado/profile/', EmpleadoProfileUpdateView.as_view(), name='empleado-profile-update'),
+    path('auth/me/', MeView.as_view(), name='me'),
 ]
 
 

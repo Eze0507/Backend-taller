@@ -23,6 +23,9 @@ from .serializers.serializers_password import ChangePasswordSerializer
 from rest_framework.exceptions import NotFound
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+from .serializers.serializers_user import UserSerializer
 
 
 # ---- ViewSets de tus compañeros ----
@@ -180,3 +183,12 @@ class CSRFTokenView(APIView):
 
     def get(self, request):
         return Response({ "detail": "CSRF cookie set" })
+
+
+class MeView(APIView):
+    """Devuelve información básica del usuario autenticado (username, email, names)"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        serializer = UserSerializer(request.user)
+        return Response(serializer.data, status=status.HTTP_200_OK)

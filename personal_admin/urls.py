@@ -16,7 +16,9 @@ from .views import (
     ClienteProfileUpdateView, 
     EmpleadoProfileUpdateView,
     ChangePasswordView, 
-    CustomTokenObtainPairView
+    CustomTokenObtainPairView,
+    BitacoraViewSet,
+    UserProfileView
     , MeView
 )
 
@@ -33,6 +35,9 @@ router.register(r'empleados', EmpleadoViewSet, basename='empleado')
 router.register(r'groupsAux', RoleViewSet, basename='role')
 router.register(r'permissions', PermissionViewSet, basename='permission')
 
+# Ruta para Bitácora
+router.register(r'bitacora', BitacoraViewSet, basename='bitacora')
+
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -42,6 +47,7 @@ urlpatterns = [
     path("csrf/", CSRFTokenView.as_view(), name="csrf-token"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
+    path('profile/', UserProfileView.as_view(), name='user-profile'),  # Nueva vista unificada
     path('cliente/profile/', ClienteProfileUpdateView.as_view(), name='cliente-profile-update'),
     path('empleado/profile/', EmpleadoProfileUpdateView.as_view(), name='empleado-profile-update'),
     path('auth/me/', MeView.as_view(), name='me'),

@@ -1,6 +1,9 @@
 from pathlib import Path
 from decouple import config
 import dj_database_url
+from dotenv import load_dotenv
+import os
+load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -9,12 +12,26 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config('SECRET_KEY')
-
+SECRET_KEY = config('SECRET_KEY', default='u8f4a3^d*t%u=*m9cz35#3k7j__pazi_ey%*c3(2)nj*%=#n&&')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = []
+# Configuración de ALLOWED_HOSTS para Railway
+RAILWAY_PUBLIC_DOMAIN = config('RAILWAY_PUBLIC_DOMAIN', default='')
+RAILWAY_STATIC_URL = config('RAILWAY_STATIC_URL', default='')
+
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "backend-git-production.up.railway.app"]
+
+if RAILWAY_PUBLIC_DOMAIN:
+    ALLOWED_HOSTS.append(RAILWAY_PUBLIC_DOMAIN)
+
+if RAILWAY_STATIC_URL:
+    domain = RAILWAY_STATIC_URL.replace('https://', '').replace('http://', '')
+    ALLOWED_HOSTS.append(domain)
+
+# Para desarrollo local con tu IP
+if DEBUG:
+    ALLOWED_HOSTS.append("192.168.0.14")
 
 # Application definition
 
@@ -25,13 +42,14 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'django_seed',
+    # 'django_seed',  # Comentado porque no está instalado
 
     # Tus apps
     'personal_admin',
     'clientes_servicios',
     'finanzas_facturacion',
     'operaciones_inventario',
+    'servicios_IA',
     'django_filters', 
 
     # Paquetes externos
@@ -63,6 +81,7 @@ SIMPLE_JWT = {
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',  # Para servir archivos estáticos
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',  
     'django.middleware.common.CommonMiddleware',
@@ -91,9 +110,11 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'backend_taller.wsgi.application'
 
+
 # Database
+
 DATABASES = {
-    'default': dj_database_url.config(default=config('DATABASE_URL'))
+    'default': dj_database_url.config(default=os.getenv('DATABASE_URL'))
 }
 
 # Password validation
@@ -106,26 +127,83 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'America/La_Paz'
 USE_I18N = True
 USE_TZ = True
 
 # Static files
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Configuración de WhiteNoise para archivos estáticos
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# CORS: permitir peticiones desde tu frontend local (ej: :contentReference[oaicite:0]{index=0} en puerto 5173)
+# CORS: permitir peticiones desde tu frontend local (ej: React en puerto 5173 o 3000)
 CORS_ALLOWED_ORIGINS = [
+    "https://frontend-git-production.up.railway.app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    "http://192.168.0.5:5173",
+    "http://192.168.0.5:3000",
+    "http://192.168.0.5:8000",
 ]
+if not DEBUG:
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = True
+    #SECURE_SSL_REDIRECT = True#
+
+# Agregar dominio de Railway si existe
+if RAILWAY_PUBLIC_DOMAIN:
+    CORS_ALLOWED_ORIGINS.extend([
+        f"https://{RAILWAY_PUBLIC_DOMAIN}",
+        f"http://{RAILWAY_PUBLIC_DOMAIN}",
+    ])
+
+# Agregar dominio de Railway a CSRF trusted origins
 CSRF_TRUSTED_ORIGINS = [
+    "https://frontend-git-production.up.railway.app",
+    "https://backend-git-production.up.railway.app",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    "http://192.168.0.5:5173",
+    "http://192.168.0.5:3000",
+    "http://192.168.0.5:8000",
 ]
+
+# Agregar dominio de Railway a CSRF trusted origins
+if RAILWAY_PUBLIC_DOMAIN:
+    CSRF_TRUSTED_ORIGINS.extend([
+        f"https://{RAILWAY_PUBLIC_DOMAIN}",
+        f"http://{RAILWAY_PUBLIC_DOMAIN}",
+    ])
+
+CORS_ALLOW_ALL_ORIGINS = False 
 
 # Permitir que el navegador envíe cookies en peticiones cross-origin
 CORS_ALLOW_CREDENTIALS = True
-API_KEY_IMGBB= config('API_KEY_IMGBB', default='')
+API_KEY_IMGBB=config('API_KEY_IMGBB', default='')
+
+# Configuración para servicios de IA - Reconocimiento de placas
+PLATE_TOKEN = config('PLATE_TOKEN', default='')
+PLATE_REGIONS = config('PLATE_REGIONS', default='bo')
+
+# ===========================
+# STRIPE CONFIGURATION
+# ===========================
+STRIPE_SECRET_KEY = config('STRIPE_SECRET_KEY', default='')
+STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY', default='')

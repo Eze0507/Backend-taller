@@ -4,8 +4,35 @@ from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['username', 'email']
+
+
+class UserPKOrNestedField(serializers.PrimaryKeyRelatedField):
+    """Permite enviar `usuario` como ID (int) o como objeto {id: X}.
+
+    También acepta null/"" para dejarlo vacío.
+    """
+    def to_internal_value(self, data):
+        # Aceptar objetos con {id: ...} o {pk: ...}
+        if isinstance(data, dict):
+            data = data.get('id') or data.get('pk')
+
+        # Normalizar vacíos
+        if data in (None, ""):
+            if self.allow_null:
+                return None
+            self.fail('required')
+
+        return super().to_internal_value(data)
+
+
 class ClienteSerializer(serializers.ModelSerializer):
     usuario_info = serializers.SerializerMethodField(read_only=True)
+    # Aceptar ID o objeto con id
+    usuario = UserPKOrNestedField(queryset=User.objects.all(), required=False, allow_null=True)
 
     class Meta:
         model = Cliente
@@ -40,12 +67,18 @@ class ClienteSerializer(serializers.ModelSerializer):
 
     def validate_apellido(self, value):
         value = value.strip()
+        # Apellido es opcional; si viene vacío, permitirlo
+        if value == "":
+            return value
         if len(value) < 2:
-            raise serializers.ValidationError("El apellido debe tener al menos 2 caracteres.")
+            raise serializers.ValidationError("El apellido debe tener al menos 2 caracteres si se proporciona.")
         return value
 
     def validate_telefono(self, value):
         value = value.strip()
+        # Teléfono es opcional
+        if value == "":
+            return value
         qs = Cliente.objects.filter(telefono=value)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
@@ -66,7 +99,9 @@ class ClienteSerializer(serializers.ModelSerializer):
 
     # -------- CREATE & UPDATE --------
     def create(self, validated_data):
+        # 'usuario' ahora es un User o None directamente desde validated_data
         return Cliente.objects.create(**validated_data)
 
     def update(self, instance, validated_data):
+        # Permite actualizar 'usuario' pasando el ID o dejarlo igual
         return super().update(instance, validated_data)

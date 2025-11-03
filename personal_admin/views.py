@@ -24,6 +24,39 @@ from .serializers.serializers_bitacora import BitacoraSerializer
 from rest_framework.exceptions import NotFound
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+from .serializers.serializers_user import UserSerializer
+
+
+# ===== FUNCIÓN HELPER PARA REGISTRAR EN BITÁCORA =====
+def registrar_bitacora(usuario, accion, modulo, descripcion, request=None):
+    """
+    Función helper para registrar acciones en la bitácora.
+    
+    Args:
+        usuario: Usuario que realiza la acción
+        accion: Acción realizada (Bitacora.Accion.CREAR, EDITAR, ELIMINAR, etc.)
+        modulo: Módulo donde se realiza la acción (Bitacora.Modulo.CARGO, CLIENTE, etc.)
+        descripcion: Descripción detallada de la acción
+        request: Objeto request para obtener la IP (opcional)
+    """
+    ip_address = None
+    if request:
+        # Obtener IP del request
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip_address = x_forwarded_for.split(',')[0]
+        else:
+            ip_address = request.META.get('REMOTE_ADDR')
+    
+    Bitacora.objects.create(
+        usuario=usuario,
+        accion=accion,
+        modulo=modulo,
+        descripcion=descripcion,
+        ip_address=ip_address
+    )
 
 
 # ---- ViewSets de tus compañeros ----
@@ -626,3 +659,12 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(fecha_accion__date__lte=fecha_hasta)
         
         return queryset
+
+
+class MeView(APIView):
+    """Devuelve información básica del usuario autenticado (username, email, names)"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        serializer = UserSerializer(request.user)
+        return Response(serializer.data, status=status.HTTP_200_OK)

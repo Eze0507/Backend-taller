@@ -16,13 +16,17 @@ class ClienteViewSet(viewsets.ModelViewSet):
     - Listar con filtros y búsqueda
     - Borrado lógico
     """
-    queryset = Cliente.objects.filter(activo=True).order_by('nombre', 'apellido')
     serializer_class = ClienteSerializer
+    def get_queryset(self):
+        user_tenant = self.request.user.profile.tenant
+        return Cliente.objects.filter(activo=True, tenant=user_tenant).order_by('nombre', 'apellido')
 
     def perform_create(self, serializer):
         """Crear cliente y registrar en bitácora"""
+        user_tenant = self.request.user.profile.tenant
+        
         # Ejecutar la creación original
-        instance = serializer.save()
+        instance = serializer.save(tenant=user_tenant)
         
         # Registrar en bitácora
         descripcion = f"Cliente '{instance.nombre} {instance.apellido}' creado con NIT '{instance.nit}' y tipo '{instance.tipo_cliente}'"
@@ -110,7 +114,6 @@ class CitaViewSet(viewsets.ModelViewSet):
     - Administradores: Ven todas las citas
     """
     permission_classes = [IsAuthenticated]
-    queryset = Cita.objects.all()  # Queryset por defecto
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['cliente__nombre', 'cliente__apellido', 'vehiculo__numero_placa', 'descripcion']
     ordering_fields = ['fecha_hora_inicio', 'fecha_creacion', 'estado']
@@ -128,31 +131,39 @@ class CitaViewSet(viewsets.ModelViewSet):
         - Administrador: Ve todas las citas
         - Empleado: Solo ve sus propias citas (donde es el empleado asignado)
         """
+        # Obtener request y usuario de forma segura: durante la generación de rutas
+        # (p. ej. DRF DefaultRouter root) self.request puede no estar disponible,
+        # y request.user puede ser AnonymousUser sin atributo 'groups'. Evitar
+        # AttributeError comprobando existencia y autenticación primero.
         user = self.request.user
-        
-        # Verificar si el usuario es administrador (tiene el grupo 'administrador')
-        is_admin = user.groups.filter(name='administrador').exists()
-        
-        # Construir queryset base
-        queryset = Cita.objects.select_related(
-            'cliente', 'empleado'
-        ).select_related('vehiculo').prefetch_related('cliente__usuario')
-        
-        # Si NO es administrador, filtrar por empleado
+        user_tenant = user.profile.tenant
+        queryset = Cita.objects.filter(tenant=user_tenant).select_related(
+            'cliente', 'empleado', 'vehiculo'
+        ).prefetch_related('cliente__usuario')
+
+        # Verificar si el usuario está autenticado y es administrador
+        is_admin = False
+        if user and getattr(user, 'is_authenticated', False):
+            try:
+                is_admin = user.groups.filter(name='administrador').exists()
+            except Exception:
+                # En caso de que user no tenga 'groups' por algún motivo,
+                # no tratar al usuario como admin
+                is_admin = False
+
+        # Si NO es administrador y el usuario está autenticado, filtrar por empleado
         if not is_admin:
-            # Buscar el empleado por NOMBRE (no por usuario asociado)
-            # Si el usuario autenticado es "pastor", buscar un empleado con nombre "pastor"
-            # sin importar qué usuario esté asociado en el campo "usuario"
-            empleado = Empleado.objects.filter(
-                nombre__iexact=user.username,
-                estado=True
-            ).first()
-            
-            if empleado:
-                # Solo mostrar citas donde este empleado está asignado
-                queryset = queryset.filter(empleado=empleado)
+            if user and getattr(user, 'is_authenticated', False):
+                # Buscar el empleado por su usuario asociado (relación directa por ID)
+                try:
+                    empleado = Empleado.objects.get(usuario=user, estado=True)
+                    # Solo mostrar citas donde este empleado está asignado
+                    queryset = queryset.filter(empleado=empleado)
+                except Empleado.DoesNotExist:
+                    # Si no se encuentra el empleado asociado al usuario, no mostrar citas
+                    queryset = queryset.none()
             else:
-                # Si no se encuentra el empleado por nombre, no mostrar citas
+                # Usuario no autenticado: no mostrar citas
                 queryset = queryset.none()
         
         # Filtros adicionales por query params
@@ -189,8 +200,23 @@ class CitaViewSet(viewsets.ModelViewSet):
         """Crear cita y registrar en bitácora"""
         user = self.request.user
         
-        # Crear la cita con el empleado que se especificó en el formulario
-        instance = serializer.save()
+        # Si no se especificó empleado, asignar automáticamente al empleado autenticado
+        user_tenant = user.profile.tenant
+        
+        empleado_asignado = serializer.validated_data.get('empleado')
+        
+        if not empleado_asignado:
+            # Buscar el empleado asociado al usuario autenticado
+            try:
+                empleado_actual = Empleado.objects.get(usuario=user, estado=True, tenant=user_tenant)
+                # Asignar el empleado antes de guardar
+                instance = serializer.save(empleado=empleado_actual, tenant=user_tenant)
+            except Empleado.DoesNotExist:
+                # Si no es empleado, guardar sin asignar empleado (puede ser admin)
+                instance = serializer.save(tenant=user_tenant)
+        else:
+            # Si se especificó empleado, usar ese
+            instance = serializer.save(tenant=user_tenant)
         
         # Preparar información para bitácora
         is_admin = user.groups.filter(name='administrador').exists()

@@ -27,7 +27,15 @@ from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from .serializers.serializers_user import UserSerializer
-
+from .models_saas import UserProfile, Tenant
+from .serializers.serializers_tenant import TallerRegistrationSerializer
+from .serializers.serializers_tenantProfile import TenantProfileSerializer
+from .serializers.serializers_userInvit import ClienteRegistrationSerializer
+from rest_framework.generics import RetrieveUpdateAPIView
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.response import Response
+import requests
+from django.conf import settings
 
 # ===== FUNCIÓN HELPER PARA REGISTRAR EN BITÁCORA =====
 def registrar_bitacora(usuario, accion, modulo, descripcion, request=None):
@@ -50,24 +58,45 @@ def registrar_bitacora(usuario, accion, modulo, descripcion, request=None):
         else:
             ip_address = request.META.get('REMOTE_ADDR')
     
+    user_tenant = None
+    
+    if usuario and usuario.is_authenticated and hasattr(usuario, 'profile'):
+        user_tenant = usuario.profile.tenant
+    
     Bitacora.objects.create(
         usuario=usuario,
         accion=accion,
         modulo=modulo,
         descripcion=descripcion,
-        ip_address=ip_address
+        ip_address=ip_address,
+        tenant=user_tenant
     )
 
 
 # ---- ViewSets de tus compañeros ----
 class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all()
+
     serializer_class = UserSerializer
+    
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user_tenant = self.request.user.profile.tenant
+        return User.objects.filter(
+            profile__tenant=user_tenant
+        ).order_by('username')
 
     def perform_create(self, serializer):
         """Crear usuario y registrar en bitácora"""
         # Ejecutar la creación original
         instance = serializer.save()
+        
+        try:
+            user_tenant = self.request.user.profile.tenant
+            UserProfile.objects.create(usuario=instance, tenant=user_tenant)
+
+        except Exception as e:
+            print(f"Error asignando tenant al profile del nuevo usuario: {e}")
         
         # Obtener información del rol
         rol_info = instance.groups.first()
@@ -219,9 +248,16 @@ class LogoutView(APIView):
 
 
 class CargoViewSet(viewsets.ModelViewSet):
-    queryset = Cargo.objects.all()
     serializer_class = CargoSerializer
-
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user_tenant = self.request.user.profile.tenant
+        return Cargo.objects.filter(tenant=user_tenant)
+    
+    def perform_create(self, serializer):
+        user_tenant = self.request.user.profile.tenant
+        instance = serializer.save(tenant=user_tenant)
 
 # ---- ViewSets para Roles y Permisos ----
 class RoleViewSet(viewsets.ModelViewSet):
@@ -407,12 +443,18 @@ class IsAuthenticatedOrReadOnly(permissions.BasePermission):
         return request.user and request.user.is_authenticated
 
 class EmpleadoViewSet(viewsets.ModelViewSet):
-    queryset = Empleado.objects.select_related("cargo", "usuario").all()
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]  
     search_fields = ["nombre", "apellido", "ci", "telefono"]
     ordering_fields = ["apellido", "nombre", "ci", "fecha_registro", "sueldo"]
     ordering = ["apellido", "nombre"]
-
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user_tenant = self.request.user.profile.tenant
+        return Empleado.objects.filter(
+            tenant=user_tenant
+        ).select_related('cargo', 'usuario')
+    
     def get_serializer_class(self):
         if self.action in ("create", "update", "partial_update"):
             return EmpleadoWriteSerializer
@@ -420,8 +462,9 @@ class EmpleadoViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Crear empleado y registrar en bitácora"""
+        user_tenant = self.request.user.profile.tenant
         # Ejecutar la creación original
-        instance = serializer.save()
+        instance = serializer.save(tenant=user_tenant)
         
         # Registrar en bitácora
         cargo_nombre = instance.cargo.nombre if instance.cargo else 'Sin cargo'
@@ -598,12 +641,18 @@ def registrar_bitacora(usuario, accion, modulo, descripcion, request=None, ip_ad
         if not ip_address and request:
             ip_address = get_client_ip(request)
         
+        user_tenant = None
+        
+        if usuario and usuario.is_authenticated and hasattr(usuario, 'profile'):
+            user_tenant = usuario.profile.tenant
+        
         Bitacora.objects.create(
             usuario=usuario,
             accion=accion,
             modulo=modulo,
             descripcion=descripcion,
-            ip_address=ip_address
+            ip_address=ip_address,
+            tenant=user_tenant
         )
         return True
     except Exception as e:
@@ -617,16 +666,22 @@ class BitacoraViewSet(viewsets.ReadOnlyModelViewSet):
     ViewSet de solo lectura para consultar registros de bitácora.
     Permite filtrar por usuario, módulo, acción y fecha.
     """
-    queryset = Bitacora.objects.select_related('usuario').all()
     serializer_class = BitacoraSerializer
+    permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['descripcion', 'usuario__username', 'usuario__email', 'ip_address']
     ordering_fields = ['fecha_accion', 'usuario__username', 'modulo', 'accion']
     ordering = ['-fecha_accion']  # Más recientes primero
     
+    
     def get_queryset(self):
         """Filtros personalizados para la bitácora"""
-        queryset = super().get_queryset()
+        
+        user_tenant = self.request.user.profile.tenant
+        
+        queryset = Bitacora.objects.filter(
+            tenant=user_tenant
+        ).select_related('usuario')
         
         # Filtro por módulo
         modulo = self.request.query_params.get('modulo', None)
@@ -668,3 +723,80 @@ class MeView(APIView):
     def get(self, request):
         serializer = UserSerializer(request.user)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+class TallerRegistrationView(APIView):
+    """
+    API pública para registrar un NUEVO Taller (Tenant).
+    Crea el Taller, el Usuario Propietario y el UserProfile.
+    """
+    permission_classes = [AllowAny] 
+
+    def post(self, request):
+        serializer = TallerRegistrationSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            user = serializer.save() 
+            return Response(
+                {"message": f"Taller y usuario '{user.username}' creados exitosamente."},
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class TenantProfileView(RetrieveUpdateAPIView):
+    serializer_class = TenantProfileSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_object(self):
+        return self.request.user.profile.tenant
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        data = request.data.copy()
+        logo_file = request.FILES.get("logo_file")
+
+        if logo_file:
+            url = "https://api.imgbb.com/1/upload"
+            payload = {"key": settings.API_KEY_IMGBB}
+            files = {"image": logo_file.read()}
+            
+            try:
+                response = requests.post(url, data=payload, files=files)
+                response.raise_for_status() 
+                
+                if response.status_code == 200:
+                    image_url = response.json()["data"]["url"]
+                    data["logo"] = image_url
+                else:
+                    return Response(
+                        {"error": "Error al subir el logo a ImgBB"}, 
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+            except requests.exceptions.RequestException as e:
+                return Response(
+                    {"error": f"Error de conexión con ImgBB: {str(e)}"}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        partial = kwargs.pop('partial', False)
+        
+        serializer = self.get_serializer(instance, data=data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer) 
+
+        return Response(serializer.data)
+
+class ClienteRegistrationView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ClienteRegistrationSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            user = serializer.save() 
+            
+            return Response(
+                {"message": f"Cliente '{user.username}' creado exitosamente."},
+                status=status.HTTP_201_CREATED
+            )
+            
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

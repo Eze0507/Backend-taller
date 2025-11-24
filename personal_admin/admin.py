@@ -1,6 +1,7 @@
 from django.contrib import admin
 from .models import Empleado, Cargo
 
+
 @admin.register(Empleado)
 class EmpleadoAdmin(admin.ModelAdmin):
     list_display = ('id', 'nombre', 'apellido', 'ci', 'cargo', 'area', 'estado')
@@ -12,4 +13,3 @@ class CargoAdmin(admin.ModelAdmin):
     list_display = ('id', 'nombre', 'sueldo')
     search_fields = ('nombre',)
 
-# Register your models here.
